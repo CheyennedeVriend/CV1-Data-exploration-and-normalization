@@ -1,0 +1,153 @@
+---
+title: "CV1.3-data-exploration-and-normalization-Finding-markers"
+author: "C.deVriend"
+date: "10-7-2022"
+output: html_document
+toc: true
+toc_float: true
+number_sections: true
+theme: readable
+code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+pre[class] {
+  max-height: 100px;
+}
+```
+
+
+# Identifying markers of proliferation and differentiation
+
+Keratinocyte proliferation is known to involve specific morphological characterstics at the nuclear and cytoplasmic levels. Many complex processes are involved in the transition from a basal cell to a corneocyte. These processes necessitate the spatiotemporal activation and inactivation of several genes and protein products that are crucial to differentiation processes leading to a healthy epidermal barrier surface. The cytokeratin family contains over 30 protein products and are known to be crucial in the formation of intermediate filaments in epithelial cells. These proteins contain sub classes, neutral-basic and acidic, based upon their sequence homology and expression patterns. These sub classes are known to partner up in order to ensure filament assembly. A large variety of the members of the keratin gene family are tightly regulated in their expression, which may aid in indicating the stage of development. In particular, the cytokeratins K5 and K14 are expressed in the epidermis during quiescence. However, during hyper-proliferative responses in for example wound healing K6, K16 and K17 become more abundantly present.
+
+(PDF) Markers of Epidermal Proliferation and Differentiation. Available from: https://www.researchgate.net/publication/316577744_Markers_of_Epidermal_Proliferation_and_Differentiation [accessed Mar 11 2022].
+
+```{r}
+library(here)
+set_here(path = "C:/Users/cheye/OneDrive/Bureaublad/Radboud/Master 21-22/Internship/Data and analysis/CV1 Data exploration and normalization")
+# Check if i am working in correct directory
+here() 
+
+# First prepare data accordingly
+# load library
+library(DESeq2)
+library(tibble)
+library(pheatmap)
+
+# Open raw count data
+ggr.rna.counts.mat.txt <- read.delim("../data/Raw count matrix/ggr.rna.counts.mat.txt.gz", row.names=1)
+
+# create sample information columns
+Sample_name<- c('d00_b1', 'd00_b2', 'd05_b1', 'd05_b2', 'd10_b1', 'd10_b2', 'd15_b1', 'd15_b2', 'd20_b1', 'd20_b2', 'd25_b1', 'd25_b2', 'd30_b1', 'd30_b2', 'd45_b1', 'd45_b2', 'd50_b1', 'd50_b2', 'd60_b1', 'd60_b2')
+Bulk_set<- c('original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate')
+Timepoint_days<-c(0,0,0.5,0.5,1,1,1.5,1.5,2,2,2.5,2.5,3,3,4.5,4.5,5,5,6,6)
+# combine columns # Sample info
+Sample_information<-data.frame(Sample_name, Bulk_set, Timepoint_days)
+
+# DESeq2 dataset
+ddsASMtime <-DESeqDataSetFromMatrix(countData = ggr.rna.counts.mat.txt, colData = Sample_information, design = ~Bulk_set + Timepoint_days)
+# filter zero counts out
+ddsASMtime<-ddsASMtime[rowSums(counts(ddsASMtime))>1,]
+# Stabalize variance
+ddsASMtime=estimateSizeFactors(ddsASMtime)
+ddsASMtime=estimateDispersions(ddsASMtime)
+gene_expr=getVarianceStabilizedData(ddsASMtime)
+
+# Annotate matrix with HGNC symbols
+library(biomaRt)
+mart= useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+genes= getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"), values = rownames(gene_expr), mart= mart)
+matched= match(rownames(gene_expr), genes$ensembl_gene_id)
+rownames(gene_expr)=genes$hgnc_symbol[matched]
+
+# Take the full normalized count data (gene_expr) # this is vst data # use this data to make heatmaps as well in the subset rmd file
+Mean_expression<-as.data.frame(gene_expr)
+# Mean day 0
+Mean_expression$Day_0<-rowMeans(Mean_expression[,c('d00_b1', 'd00_b2')], na.rm=TRUE)
+# Mean day 0.5
+Mean_expression$Day_0.5<-rowMeans(Mean_expression[,c('d05_b1', 'd05_b2')], na.rm=TRUE)
+# Mean day 1
+Mean_expression$Day_1<-rowMeans(Mean_expression[,c('d10_b1', 'd10_b2')], na.rm=TRUE)
+# Mean day 1.5
+Mean_expression$Day_1.5<-rowMeans(Mean_expression[,c('d15_b1', 'd15_b2')], na.rm=TRUE)
+# Mean day 2
+Mean_expression$Day_2<-rowMeans(Mean_expression[,c('d20_b1', 'd20_b2')], na.rm=TRUE)
+# Mean day 2.5
+Mean_expression$Day_2.5<-rowMeans(Mean_expression[,c('d25_b1', 'd25_b2')], na.rm=TRUE)
+# Mean day 3
+Mean_expression$Day_3<-rowMeans(Mean_expression[,c('d30_b1', 'd30_b2')], na.rm=TRUE)
+# Mean day 4.5
+Mean_expression$Day_4.5<-rowMeans(Mean_expression[,c('d45_b1', 'd45_b2')], na.rm=TRUE)
+# Mean day 5
+Mean_expression$Day_5<-rowMeans(Mean_expression[,c('d50_b1', 'd50_b2')], na.rm=TRUE)
+# Mean day 6
+Mean_expression$Day_6<-rowMeans(Mean_expression[,c('d60_b1', 'd60_b2')], na.rm=TRUE)
+
+# Remove old columns
+library(dplyr)
+Mean_expression = select(Mean_expression, -1:-20)
+
+# Export mean_Expression to import in subset analysis rmd file
+Mean_expression_name_column<-tibble::rownames_to_column(Mean_expression, var="ID") # change rownmes to column excel does not read rownames so you will lose them if you keep the dataframe like the original
+library("writexl")
+write_xlsx(Mean_expression_name_column,"VST_Mean_Expression_Data")
+```
+
+```{r}
+# Proliferative marker genes, according to literature 
+Proliferation_markers<- Mean_expression[rownames(Mean_expression) %in% c( "KRT5", "KRT14","KRT6","KRT16","KRT17","MKI67","P63","MCM2","MCM3","MCM4", "MCM5","MCM6","MCM7","MCM8","MCM9","PCNA","cAMP","AMP","TP63","cAMP"),]
+# heatmap
+pheatmap(Proliferation_markers,fontsize=14, show_rownames = TRUE, cluster_cols = FALSE, main = "Proliferation markers", angle_col = 45, treeheight_col = 0, border_color = NA, scale = "column")
+```
+
+```{r}
+# Differentiation marker genes
+Differentiation_markers<- Mean_expression[rownames(Mean_expression) %in% c( "KRT19","KRT1","KRT10","KRT2", "KRT11","KRT9","TGM1","TGM2","TGM3","TGM4","TGM5","TGM6","TGM7","FLG","KHG","LRN","LOR","LORICRIN","HOXA7","ITGA1","ITGA2","ITGA3","ITGA4","ITGA5","ITGA6","ITGA7","ITGA8","ITGA9","ITGA10","ITGA11","ITGAD","ITGAE","ITGAL","ITGAM","ITGAV","ITG","ITGA","ITGA2B", "ITGAX","ITGB1","ITGB2","ITGB3","ITGB4","ITGB5","ITGB6","ITGB7","ITGB8"),]
+# heatmap
+pheatmap(Differentiation_markers,fontsize=14, show_rownames = TRUE, cluster_cols = FALSE, main = "Differentiation markers", angle_col = 45, treeheight_col = 0, border_color = NA, scale = "column")
+```
+
+Here I will plot all markers I have found in literature: K19 K1 K10 K2 K11 K9 TGM1 TGM2 TGM3 TGM4 TGM5 TGM6 TGM7 FLG KHG LRN/LOR/LORICRIN HOXA7 ITGA1 ITGA2 ITGA3 ITGA4 ITGA5 ITGA6 ITGA7 ITGA8 ITGA9 ITGA10 ITGA11 ITGAD ITGAE ITGAL ITGAM ITGAV ITG ITGA ITGA2B ITGAX ITGB1 ITGB2 ITGB3 ITGB4 ITGB5 ITGB6 ITGB7 ITGB8
+
+Based upon visual inspection of the heatmap I will exclude expression profiles that do not show a gradual increase/decreae. Most interesting markers seem to be: LORICRIN KRT10 FLG KRT1 KRT19 ITGB8 ITGB2
+
+```{r}
+Differentiation_marker_selection<- Mean_expression[rownames(Mean_expression) %in% c("KRT10","LORICRIN","FLG","KRT1","KRT19", "ITGB8","ITGB2"),]
+# heatmap
+pheatmap(Differentiation_marker_selection,fontsize=14, show_rownames = TRUE, cluster_cols = FALSE, main = "Differentiation markers", angle_col = 45, treeheight_col = 0, border_color = NA, scale = "column")
+```
+
+The original dataset is from Khavari P. et al. (2021), in which a variety of biomarkers were found in the PAS-seq data. In order to check the reproducibility of this plot wihtin my data I will attempt to plot these as well.
+```{r, warning=FALSE, fig.height=10}
+Khavari_markers<- Mean_expression[rownames(Mean_expression) %in% c("ZNF750","GC17M078381","ZFP750","GRHL1","DSG1","KRT1","CEBPA","GRHL3","CDSN","AT2C2","KRT10","LORICRIN","LOR","KLF4","ELOVL4","ALOXE3","PRDM1","TP63","COL17A1","KRT5","KRT14","ACTL6A","PRMT1","CDK1","CDC25A","ITGB4","DNMT1"),]
+# Change color palatte to a similar one that Khavari used ~white to red # white to red was visually not that nice so included blue again
+Khavari_colors<-colorRampPalette(c( "darkblue","WHITESMOKE","indianred"))(100)
+# heatmap
+pheatmap(Khavari_markers,color = Khavari_colors, fontsize=14, show_rownames = TRUE, cluster_cols = FALSE, main = "Biomarkers Khavari P. et al., (2021)", angle_col = 45, treeheight_col = 0, border_color = NA, scale = "column")
+```
+
+Based upon the expression profiles I decided to include the following markers to the final plot: From my own proliferation list (13): KRT16 KRT17 KRT5 KRT14 MCM6 MCM8 MCM5 TP63 MKI67 PCNA MCM7 MCM4 MCM3
+
+From my own differentiation list (13): LORICRIN ITGB2 TGM2 KRT10 ITGAB1 ITGB4 FLG KRT19 ITGAV ITGB8 ITGB6 ITGA5 KRT1
+
+From Khavari’s pas-seq biomarker list (16): A1COL17A PRMT1 CDC25A GRHL3 ALOXE3 CDSN DSG1 ZNF750 CEBPA GRHL1 ELOVL4 KLF4 DNMT1 CDK1 ACTLA6A PRDM1
+
+From GO-enrichment analysis CV01:FLG2, CDSN
+
+```{r, fig.height=12}
+Full_markerset<- Mean_expression[rownames(Mean_expression) %in% c("KRT16",
+"KRT17","KRT5","KRT14","MCM6","MCM8","MCM5","TP63","MKI67","PCNA","MCM7","MCM4","MCM3", "LORICRIN","ITGB2","TGM2","KRT10","ITGAB1","ITGB4","FLG","KRT19","ITGAV","ITGB8","ITGB6","ITGA5","KRT1", 
+"A1COL17A","PRMT1","CDC25A","GRHL3","ALOXE3","CDSN","DSG1","ZNF750","CEBPA","GRHL1","ELOVL4","KLF4","DNMT1","CDK1","ACTLA6A","PRDM1", "FLG2", "CDSN","CNFN", "CST6", "DSC1","DSG1","HRNR","KRT2","KRT23","KRT6C","KRT77","KRT78","KRT79","KRT80", "KRT9,PI3", "RPTN", "SLC1A6","SPRR2B","SPRR2E","SPRR2G","SPRR3" ),]
+# heatmap
+pheatmap(Full_markerset,color = Khavari_colors, fontsize=20, fontsize_row = 12, show_rownames = TRUE, cluster_cols = FALSE, main = "Differentiation and profliferation markers", angle_col = 45, treeheight_col = 0, border_color = NA, scale = "column")
+```
+
+

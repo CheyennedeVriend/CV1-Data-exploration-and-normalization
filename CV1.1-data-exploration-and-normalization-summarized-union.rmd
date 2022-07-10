@@ -1,0 +1,351 @@
+--- 
+title: "CV1.1 Data exploration and normalization summarized union"
+author: "C.deVriend"
+date: "10-7-2022"
+output: html_document
+toc: true
+toc_float: true
+number_sections: true
+theme: readable
+code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+pre[class] {
+  max-height: 100px;
+}
+```
+
+```{r, start_rwflow}
+# First we will start working with workflowr
+#install.packages("workflowr")
+library(workflowr)
+library(here)
+
+#wflow_start("/Users/cheye/OneDrive/Bureaublad/Radboud/Master 21-22/Internship/Data and analysis/CV1 Data exploration and normalization", existing = TRUE)
+#set_here(path = "C:/Users/cheye/OneDrive/Bureaublad/Radboud/Master 21-22/Internship/Data and analysis/CV1 Data exploration and normalization")
+# Check if i am working in correct directory
+here() 
+
+```  
+
+# Data normalization
+The bulk PAS-seq dataset described by Kim D. S. et al., (2020) is based upon induced keratinocyte differentiation by addition of calcium. For a total of six days, cells were harvested every twelve hours creating a total of thirteen time points. This allows for comprehensive data that can be analyzed extensively in order to identify transcriptional activity during the variety of differentiation time points. 
+
+Note that the the raw counts data (57820 genes), which was used in this analysis, only contains ten time points in contrast to the thirteen time points mentioned by Kim D. S. et al., (2020).
+
+```{r}
+# load library
+library(DESeq2)
+
+# Open raw count data
+ggr.rna.counts.mat.txt <- read.delim("./data/Raw count matrix/ggr.rna.counts.mat.txt.gz", row.names=1)
+
+# create sample information columns
+Sample_name<- c('d00_b1', 'd00_b2', 'd05_b1', 'd05_b2', 'd10_b1', 'd10_b2', 'd15_b1', 'd15_b2', 'd20_b1', 'd20_b2', 'd25_b1', 'd25_b2', 'd30_b1', 'd30_b2', 'd45_b1', 'd45_b2', 'd50_b1', 'd50_b2', 'd60_b1', 'd60_b2')
+
+
+Bulk_set<- c('original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate', 'original', 'duplicate')
+Timepoint_days<-c(0,0,0.5,0.5,1,1,1.5,1.5,2,2,2.5,2.5,3,3,4.5,4.5,5,5,6,6)
+# combine columns
+Sample_information<-data.frame(Sample_name, Bulk_set, Timepoint_days)
+```
+
+## Creating a DESeq2 dataset
+
+The experimental design is specified at the beginning of the analysis, as it will inform many of the DESeq2 functions how to treat the samples in the analysis. The design formula tells which columns in the sample info table specify the experimental design and how these factors should be used in the analysis. The simplest design formula for differential expression would be ~condition, where condition is a column in the sample info that specifies which of two (or more) groups the samples belong to. In our case we would use ~ Timepoint_days + Bulk_set.
+
+However, before we do that it is of interest to see how the non-normalized data looks, and how the log-transformed or VST transformed data looks.
+
+
+```{r}
+# Construct the DESeqDataSet object from the matrix of counts and the sample info table
+ddsASM <- DESeqDataSetFromMatrix(countData = ggr.rna.counts.mat.txt, colData = Sample_information, design = ~Timepoint_days + Bulk_set)
+ddsASMtime <-DESeqDataSetFromMatrix(countData = ggr.rna.counts.mat.txt, colData = Sample_information, design = ~Bulk_set + Timepoint_days)
+```
+## Pre-filtering 
+In RNA-seq experiments events where info is not complex or rich enough are called dropouts. Gene dropouts are genes that show low or moderate expression level in one sample but are not detected in any other sample. A sample dropout is when a sample shows any expression in an abnormally low amount of genes compared to the rest of the samples
+Given the nature of the bulk RNA-seq data, sample dropout will not be an issue. However, let's have a look at how many genes we are considereing in our matrix and how many of those have 1 count or less across all the samples.
+
+```{r}
+
+# Remember that genes are rows in the genes by samples (counts) matrix. we can check how many genes are in total by counting rows
+nrow(counts(ddsASM)) # 57820 genes, as expected 
+nrow(counts(ddsASMtime)) # 57820 genes, as expected
+# check how many show 1 or less counts
+sum(rowSums(counts(ddsASM))<2) # 35364 genes show low counts
+sum(rowSums(counts(ddsASMtime))<2) #35364 genes show low counts
+# Keep only the genes with expression in the dataset
+ddsASM<-ddsASM[rowSums(counts(ddsASM)) >1,]
+ddsASMtime<-ddsASMtime[rowSums(counts(ddsASMtime)) >1,]
+# the condition will again return a vector of TRUE/FALSE for each gene, which we used to decide what genes to keep
+nrow(ddsASM) # 22456 genes kept
+nrow(ddsASMtime) # 22456 genes kept
+```
+
+## Variance stabilizing transformation 
+In RNA-seq data the expected variance grows with the mean (data is heteroskedastic) hence, PCA results will be driven by genes with the highest counts because they're the ones which tend to naturally show the largest absolute differences between samples. Notice that for RNA-seq data, the variance actually grows faster than the mean (it has a negative bionomial distribution).
+
+As a solution, DESeq2 offers two transformations for count data that stabilize the variance across the mean: the variance stabilizing transformation (VST) for negative binomial data with a dispersion-mean trent, implemented in the vst function and the regularized-logarithm transformation or rlog.
+
+```{r}
+# Transform data for visualization purposes downstream pathway and transcritpion factor analyses.
+vsdASM<-vst(ddsASM, blind = FALSE) # the option blind = FALSE tells the function not to neglect the desing; as timpoint might affect the dispersion-mean as well 
+vsdASMtime<-vst(ddsASMtime, blind = FALSE)
+```
+
+```{r}
+# Visualize heteroskedacticity of data before and after vst
+library("vsn")
+# Visualization raw data
+meanSdPlot(assay(ddsASMtime))
+# Visualization if i would have chosen for logtransform *which I have shown in previous presentations to not be as effective on this data than a vst normalization
+ntd <- normTransform(ddsASMtime)
+meanSdPlot(assay(ntd))
+# Visualiztion vst data
+meanSdPlot(assay(vsdASMtime))
+
+```
+
+## Sample distances
+A useful first step in an RNA-seq analysis is often to assess overall similarity between samples: which samples are similar to each other, which are different? does this fit to the expectation of the experiments design?
+For this purpose calculating the similariteis between samples e.g. Euclidean distance, can be very useful. In this case, we want to assess differences between samples weighing genes similarly, thus it is more adequate to use transformed (VST or rlog) data.
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+
+# first we calculate the Euclidean distances between samples considering the counts of each gene
+# assay() extracts the transformed counts, t() transposes columns and rows (dist() works with rows). if we wouldn't transpose we would obtain distances between genes isntead.
+SampleDists<-dist(t(assay(vsdASM)))
+# from that create a matrix for the heatmap function
+SampleDistsMatrix<-as.matrix(SampleDists)
+# now give names to the samples that will elp us interpreting the heatmap
+rownames(SampleDistsMatrix)<-paste("Day", vsdASM$Timepoint_days, vsdASM$Bulk_set, sep = " ")
+colnames(SampleDistsMatrix)<- NULL
+# Prepare a blue pallete
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+# finally calling the function
+pheatmap(SampleDistsMatrix, clustering_distance_rows = SampleDists, clustering_distance_cols = SampleDists, col = colors, main = "Sample similarity matrix", fontsize = 10, fontsize_row = 15)
+```
+
+## Principal component analysis
+In this ordination method, the samples/datapoints are projected onto the 2D plane such that they spread out in the two directions that explain most of the differences. The x-axis is the direction that separates the data points the most. The values of the samples in the direction are written as PC1. The y-axis is a direction (it must be orthogonal to the first direction) that separates the data the second most. The values of the samples in this direction are written PC2. The percent of the total variance that is contained in the direction is printed in the axis label.
+```{r}
+plotPCA(vsdASM, intgroup = c("Timepoint_days", "Bulk_set")) # 61% of variance explained by time component
+plotPCA(vsdASMtime, intgroup = c("Bulk_set", "Timepoint_days"))
+# save the pca data in an object for later plotting using ggplot2
+pcaData <- plotPCA(vsdASM, intgroup = c( "Timepoint_days", "Bulk_set"), returnData = TRUE)
+pcaDatatime<-  plotPCA(vsdASMtime, intgroup = c( "Bulk_set", "Timepoint_days"), returnData = TRUE)
+# Calculate the percent of variance explained for the first two PC's
+percentVar<-round(100*attr(pcaData,"percentVar"))
+percentVartime<-round(100*attr(pcaDatatime,"percentVar"))
+# We can then use these data to build up a plot, specifying that the color of the points should reflect the time and duplicate the shape
+library(ggplot2)
+# first make sure the timepoints are a factor variable otherwise it will not color the datapoints seperately
+Timepoint_days_factor<-factor(Timepoint_days)
+# Call function
+ggplot(pcaData, aes(x=PC1, y=PC2, color=Timepoint_days_factor, shape=Bulk_set)) + geom_point(size=3) + xlab(paste0("PC1: ", percentVar[1], "% variance")) + ylab(paste0("PC2: ", percentVar[2], "% variance")) + coord_fixed() + ggtitle("PCA with VST data")
+ggplot(pcaDatatime, aes(x=PC1, y=PC2, color=Timepoint_days_factor, shape=Bulk_set)) + geom_point(size=3) + xlab(paste0("PC1: ", percentVartime[1], "% variance")) + ylab(paste0("PC2: ", percentVartime[2], "% variance")) + coord_fixed() + ggtitle("PCA with VST time data")
+```
+
+# Differential expression analyses
+I have already specified an experimental design when I create the DESeqDataset, now run the differential expression pipeline on the raw counts with a single call to the function DESeq. This function prints out a message for the various steps it performs. These are:
+
+1. The estimation of size factors, controlling for differences in the counts due to varying sequencing depth of the samples
+2. The estimation of dispersion values. The dispersion parameter captures how much the counts for the samples will vary around an expected value. Note that the expected value takes into consideration the sequencning depth and differences that can be attributed to variables in the design formula.
+3. Fitting a final generalized linear model using the size factors ad dispersion values estimated above, which gives estimates of the log fold changes.
+
+## Factor bulk set
+```{r}
+# I have already specified an experimental design when I create the DESeqDataset, now run the differential expression pipeline on the raw counts with a single call to the function DESeq;
+ddsASM<-DESeq(ddsASM)
+
+# Building the results table
+# Calling results without any arguments will extract the estimated log2 fold changes and p values for the last variable of the design formula. The ccomparison is printed at the top of the output: timepoint vs duplicate
+res <- results(ddsASM)
+res
+```
+
+The first column baseMean is just the average of the normalized count values, divided by the size facotrs, taken over all samples in the DESeqDataSet. The remaining four columns refer to a specifc contrast, namely the comparison of the duplicate status (original or duplicate) for the factor variable. The column log2foldchange is the effect size estimate. it tells us how much the genes expression seems to have changed between orignal and duplicate.The value is reported on the logarithmic scale to base 2 e.g. a change of gene expression of a factor 8 would give a value 3.The column lfcSE displays the standard error estimate for the log2 fold change estimate, which tells me about the uncertainty that's associated with that fold change.The purpose of a test for differential expression is to test whether the data provides sufficient evidence to conclude that this value (the difference in expression) is really different from zero. DESeq2 performs for each gene a hypothesis test ot see whether the evidence is sufficient to decide agianst H0. the result of this test can be found in the column p-value. Finally the column padj reports the p-value but corrected for multiple testing. By default, Benjamine & Hockberg (FDR) is used for this.
+
+```{r}
+# summary results
+summary(res)
+```
+
+## Factor timepoint
+```{r}
+ddsASMtime<-DESeq(ddsASMtime)
+# Building results table
+restime<-results(ddsASMtime)
+restime
+summary(restime)
+
+# Include results filtered on significance
+# Look at results when p-value is 0.05
+res_p0.05<- results(ddsASMtime, alpha = 0.05)
+summary(res_p0.05)
+```
+
+It has become clear that the factor timepoint is the most important for our analyses therefore all subsequent analyses will be performed with this dataset. Before we start the downstream analyses, it is of interest to visualize these differentially expression results. Therefore I opted to create a volcano plot summarizing this information.
+
+```{r}
+# Determine expression labels; up down 
+res_p0.05$expression = ifelse(res_p0.05$padj < 0.05 & abs(res_p0.05$log2FoldChange) >= 1, 
+                     ifelse(res_p0.05$log2FoldChange> 1 ,'Up','Down'),
+                     'Stable')
+res_p0.05<-as.data.frame(res_p0.05)
+
+# Include plot
+# yintercept is the threshold of -log(p-value) so -log(0.05) is 1.301
+library(ggplot2)
+plot <- ggplot(data = res_p0.05, 
+            aes(x = log2FoldChange, 
+                y = -log2(res_p0.05$padj), 
+                colour=expression,
+                label = res_p0.05$SYMBOL)) +
+  geom_point(alpha=0.4, size=3.5) +
+  scale_color_manual(values=c("blue", "grey","red"))+
+  xlim(c(-4.5, 4.5)) +
+  geom_vline(xintercept=c(-1,1),lty=4,col="black",lwd=0.8) +
+  geom_hline(yintercept = 1.301,lty=4,col="black",lwd=0.8) +
+  labs(x="log2(fold change)",
+       y="-log10 (adj.p-value)",
+       title="Differential expression summarized union")  +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position="right", 
+        legend.title = element_blank())
+plot
+```
+
+Results indicate that 22456 genes with nonzero counts were assessed whereof 20% was upregulated and 17% was downregulated (p<0.1). Nevertheless, this p-value is non-significant. Therefore, I reran the piece of code for significance level a=0.05. This revealed reliable results as 17% of genes were upregulated and 15% were downregulated (p<0.05). `
+
+# Gene annotation
+Before we start further visualization/analysis I decided to annotate the genes with HGNC symbols.Because I want to do a GO analysis I will create a new df that only contains the rownames.
+
+```{r}
+# Recreate df without expression column
+res_p0.05<- as.data.frame(results(ddsASMtime, alpha = 0.05))
+
+# Annotation
+library(biomaRt)
+mart= useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+genes= getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"), values = rownames(res_p0.05), mart= mart)
+matched= match(rownames(res_p0.05), genes$ensembl_gene_id)
+res_p0.05$ID=genes$hgnc_symbol[matched]
+
+# remove other columns 
+DESeq_gene_names<-res_p0.05
+DESeq_gene_names<-subset(DESeq_gene_names, select = -c(1:6))
+
+# Remove duplicate rowname 'POLR2J4'
+#raw_counts<-raw_counts[!(raw_counts$ID=="POLR2J4"),]
+
+# 22456 genes at this point
+# change empty spaces with NA then remove NA's 
+DESeq_gene_names[DESeq_gene_names == ""] <- NA
+# Remove NA's # we go from 22456 to 18675
+DESeq_gene_names<- na.omit(DESeq_gene_names)
+
+# load library
+library(tibble)
+
+# Change rownames
+DESeq_gene_names<-rownames_to_column(DESeq_gene_names)
+DESeq_gene_names<-column_to_rownames(DESeq_gene_names, var = "ID")
+
+
+```
+
+## Go-classification
+In order to perform the GO analysis I need the group(GO) function to classify our differentially expressed genes.
+```{r}
+# Changed previous dataframe so create new one
+
+res_p0.05$expression = ifelse(res_p0.05$padj < 0.05 & abs(res_p0.05$log2FoldChange) >= 1, 
+                     ifelse(res_p0.05$log2FoldChange> 1 ,'Up','Down'),
+                     'Stable')
+res_p0.05<-as.data.frame(res_p0.05)
+
+
+# Create a df only containing significantly up and down regulated genes
+# We extract these using our own criteria e.g. the one we created for expression label
+# This leaves us with 403 genes
+DESeq_up_down_only<-  res_p0.05[- grep("Stable", res_p0.05$expression),]
+# remove last two columns
+DESeq_up_down_only<-dplyr::select(DESeq_up_down_only,-c(7:8),)
+
+# create genes string
+gene_string<-rownames(DESeq_up_down_only)[abs(DESeq_up_down_only$stat)>2] # select/rank genes upon absolute t-value
+
+# Install package thata keeps our database
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("org.Hs.eg.db")
+
+# load library
+library(org.Hs.eg.db)
+library(clusterProfiler)
+
+ggo <- groupGO(gene     = gene_string,
+               OrgDb    = org.Hs.eg.db,
+               keyType  = "ENSEMBL",
+               ont      = "CC",
+               level    = 3,
+               readable = TRUE)
+
+head(ggo)
+
+```
+The gene parameter is a vector of gene IDs (which can be any ID type that is supported by the corresponding OrgDb). If readable is set to TRUE the input gene IDs will be converted to gene symbols.
+
+## GO over-representation analysis
+The ClusterProfiler package implements enrichGO() for GO over-representation tests.
+
+```{r}
+#Any gene ID type that is supported in OrgDb can be directly used in GO analyses. Users need to specify the keyType parameter to specify the input gene ID type.
+ego <- enrichGO(gene          = gene_string,
+                universe      = rownames(res_p0.05),
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENSEMBL", 
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05,
+        readable      = TRUE)
+head(ego)
+
+
+```
+Now we have obtained the data for the GO over-representation analysis we are able to visualize these results.
+
+Gene ontologies (GO) are structured as a directed acyclic graph with GO terms as nodes and their relationships as edges. The most commonly used relationships in GO are:
+
+* is a
+* part of
+* has part
+* regulates
+* negatively regulates
+* positively regulates
+
+```{r, warning=FALSE, fig.height=5}
+# Variety of ways to visualize
+# barplot
+barplot(ego)
+# dotplot
+dotplot(ego)
+#Heat plot showing the enriched GO terms on the y-axis and the genes on the x-axis. Genes with the associated GO term are highlighted.
+heatplot(ego)
+# goplot shows the gene ontology graph with the enriched GO terms highlighted.
+goplot(ego)
+```

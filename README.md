@@ -1,5 +1,3 @@
-# CV1 Data exploration and normalization
+# Output
 
-A [workflowr][] project.
-
-[workflowr]: https://github.com/workflowr/workflowr
+Save processed data files here.
